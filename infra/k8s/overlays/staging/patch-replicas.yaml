@@ -1,0 +1,30 @@
+# =============================================================================
+# Staging — Replica + Resource Patch
+# =============================================================================
+# Reduces replicas and resource limits for staging
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-app
+spec:
+  replicas: 2
+  template:
+    spec:
+      containers:
+        - name: my-app
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: my-app
+spec:
+  minReplicas: 2
+  maxReplicas: 5

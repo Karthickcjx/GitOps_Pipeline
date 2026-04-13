@@ -1,0 +1,92 @@
+# =============================================================================
+# OPA Gatekeeper — Require Security Context
+# =============================================================================
+# ConstraintTemplate: Containers must run as non-root with security context
+# =============================================================================
+apiVersion: templates.gatekeeper.sh/v1
+kind: ConstraintTemplate
+metadata:
+  name: requiresecuritycontext
+  annotations:
+    description: "Requires containers to have a security context with runAsNonRoot, readOnlyRootFilesystem, and drop ALL capabilities"
+spec:
+  crd:
+    spec:
+      names:
+        kind: RequireSecurityContext
+      validation:
+        openAPIV3Schema:
+          type: object
+          properties:
+            exemptImages:
+              type: array
+              items:
+                type: string
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package requiresecuritycontext
+
+        # Pod-level: runAsNonRoot must be true
+        violation[{"msg": msg}] {
+          spec := input.review.object.spec.template.spec
+          not spec.securityContext.runAsNonRoot
+          msg := "Pod must set spec.securityContext.runAsNonRoot to true"
+        }
+
+        # Container-level: allowPrivilegeEscalation must be false
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.template.spec.containers[_]
+          not exempt(container)
+          not container.securityContext.allowPrivilegeEscalation == false
+          msg := sprintf("Container '%v' must set securityContext.allowPrivilegeEscalation to false", [container.name])
+        }
+
+        # Container-level: readOnlyRootFilesystem should be true
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.template.spec.containers[_]
+          not exempt(container)
+          not container.securityContext.readOnlyRootFilesystem
+          msg := sprintf("Container '%v' should set securityContext.readOnlyRootFilesystem to true", [container.name])
+        }
+
+        # Container-level: capabilities must drop ALL
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.template.spec.containers[_]
+          not exempt(container)
+          not has_drop_all(container)
+          msg := sprintf("Container '%v' must drop ALL capabilities", [container.name])
+        }
+
+        has_drop_all(container) {
+          caps := container.securityContext.capabilities.drop
+          caps[_] == "ALL"
+        }
+
+        exempt(container) {
+          patterns := object.get(input.parameters, "exemptImages", [])
+          img := container.image
+          pattern := patterns[_]
+          startswith(img, pattern)
+        }
+---
+# Constraint: Enforce on all Deployments
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: RequireSecurityContext
+metadata:
+  name: require-security-context
+spec:
+  enforcementAction: warn  # Start with warn, move to deny after validation
+  match:
+    kinds:
+      - apiGroups: ["apps"]
+        kinds: ["Deployment", "StatefulSet", "DaemonSet"]
+    excludedNamespaces:
+      - kube-system
+      - gatekeeper-system
+      - istio-system
+      - monitoring
+  parameters:
+    exemptImages:
+      - "registry.k8s.io/"
+      - "docker.io/istio/"

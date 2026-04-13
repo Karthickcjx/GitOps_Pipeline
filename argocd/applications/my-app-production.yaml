@@ -1,0 +1,57 @@
+# =============================================================================
+# ArgoCD Application — my-app (Production)
+# =============================================================================
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: my-app-production
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: my-app
+    app.kubernetes.io/environment: production
+    app.kubernetes.io/part-of: gitops-platform
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  annotations:
+    notifications.argoproj.io/subscribe.on-sync-succeeded.slack: platform-deployments
+    notifications.argoproj.io/subscribe.on-sync-failed.slack: platform-alerts
+    notifications.argoproj.io/subscribe.on-health-degraded.slack: platform-alerts
+spec:
+  project: production
+
+  source:
+    repoURL: https://github.com/org/gitops-platform
+    targetRevision: HEAD
+    path: infra/k8s/overlays/production
+    kustomize: {}
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: my-app-prod
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+      allowEmpty: false
+    syncOptions:
+      - CreateNamespace=true
+      - PrunePropagationPolicy=foreground
+      - PruneLast=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m
+
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      jsonPointers:
+        - /spec/replicas
+    - group: autoscaling
+      kind: HorizontalPodAutoscaler
+      jsonPointers:
+        - /spec/minReplicas
+        - /spec/maxReplicas

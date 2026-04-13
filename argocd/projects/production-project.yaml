@@ -1,0 +1,58 @@
+# =============================================================================
+# ArgoCD AppProject — Production
+# =============================================================================
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: production
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  description: Production environment workloads
+
+  sourceRepos:
+    - https://github.com/org/gitops-platform
+    - https://github.com/org/gitops-platform.git
+
+  destinations:
+    - namespace: my-app-prod
+      server: https://kubernetes.default.svc
+
+  clusterResourceWhitelist:
+    - group: ''
+      kind: Namespace
+
+  namespaceResourceBlacklist:
+    - group: ''
+      kind: ResourceQuota
+    - group: ''
+      kind: LimitRange
+
+  # Stricter RBAC for production
+  roles:
+    - name: viewer
+      description: "Read-only access to production apps"
+      policies:
+        - p, proj:production:viewer, applications, get, production/*, allow
+      groups:
+        - developers
+
+    - name: deployer
+      description: "Can sync but not delete production apps"
+      policies:
+        - p, proj:production:deployer, applications, get, production/*, allow
+        - p, proj:production:deployer, applications, sync, production/*, allow
+      groups:
+        - senior-engineers
+
+    - name: admin
+      description: "Full access to production apps"
+      policies:
+        - p, proj:production:admin, applications, *, production/*, allow
+      groups:
+        - platform-admins
+
+  # Signed commits only (optional, enable if using GPG)
+  # signatureKeys:
+  #   - keyID: ABCDEF123456

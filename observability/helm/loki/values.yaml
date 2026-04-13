@@ -1,0 +1,95 @@
+# =============================================================================
+# Loki — Helm Values
+# =============================================================================
+# Log aggregation with Promtail as DaemonSet
+# =============================================================================
+
+loki:
+  enabled: true
+
+  config:
+    auth_enabled: false
+
+    server:
+      http_listen_port: 3100
+      grpc_listen_port: 9096
+
+    common:
+      path_prefix: /loki
+      storage:
+        filesystem:
+          chunks_directory: /loki/chunks
+          rules_directory: /loki/rules
+      replication_factor: 1
+      ring:
+        kvstore:
+          store: inmemory
+
+    schema_config:
+      configs:
+        - from: "2024-01-01"
+          store: tsdb
+          object_store: filesystem
+          schema: v13
+          index:
+            prefix: index_
+            period: 24h
+
+    limits_config:
+      reject_old_samples: true
+      reject_old_samples_max_age: 168h  # 7 days
+      max_query_length: 0
+      max_query_parallelism: 32
+      retention_period: 744h  # 31 days
+
+    compactor:
+      working_directory: /loki/retention
+      compaction_interval: 10m
+      retention_enabled: true
+      retention_delete_delay: 2h
+
+  persistence:
+    enabled: true
+    storageClassName: gp3
+    size: 50Gi
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi
+
+# ── Promtail ────────────────────────────────────────────────────────────────
+
+promtail:
+  enabled: true
+
+  config:
+    lokiAddress: http://loki:3100/loki/api/v1/push
+
+    snippets:
+      # Add Kubernetes metadata to logs
+      pipelineStages:
+        - cri: {}
+        - json:
+            expressions:
+              level: level
+              msg: msg
+              trace_id: trace_id
+        - labels:
+            level:
+            trace_id:
+
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+
+  tolerations:
+    - effect: NoSchedule
+      operator: Exists

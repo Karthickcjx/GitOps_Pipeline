@@ -1,0 +1,139 @@
+# =============================================================================
+# Deployment — Base
+# =============================================================================
+# Production-grade deployment with:
+#   - Security context (non-root)
+#   - Resource requests/limits
+#   - Readiness + liveness probes
+#   - Topology spread constraints for AZ distribution
+#   - Service account with IRSA
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-app
+  labels:
+    app: my-app
+    version: stable
+    app.kubernetes.io/name: my-app
+    app.kubernetes.io/component: server
+    app.kubernetes.io/part-of: gitops-platform
+spec:
+  replicas: 2
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels:
+      app: my-app
+  template:
+    metadata:
+      labels:
+        app: my-app
+        version: stable
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: my-app
+      terminationGracePeriodSeconds: 30
+
+      # Pod-level security context
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 2000
+        fsGroup: 2000
+        seccompProfile:
+          type: RuntimeDefault
+
+      # Spread pods across availability zones
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              app: my-app
+
+      containers:
+        - name: my-app
+          image: MY_APP_IMAGE  # Replaced by kustomize
+          imagePullPolicy: IfNotPresent
+
+          ports:
+            - containerPort: 8080
+              name: http
+              protocol: TCP
+            - containerPort: 9090
+              name: metrics
+              protocol: TCP
+
+          # Container-level security
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+
+          # Resource management
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+
+          # Health checks
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            successThreshold: 1
+            failureThreshold: 3
+
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            timeoutSeconds: 5
+            successThreshold: 1
+            failureThreshold: 3
+
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 30  # 5s × 30 = 150s max startup time
+
+          # Environment from secrets (synced by External Secrets Operator)
+          envFrom:
+            - secretRef:
+                name: my-app-secrets
+
+          # Writable temp directory for read-only root filesystem
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+# Service Account for IRSA
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: my-app
+  labels:
+    app: my-app
+  annotations:
+    eks.amazonaws.com/role-arn: "" # Set per environment overlay

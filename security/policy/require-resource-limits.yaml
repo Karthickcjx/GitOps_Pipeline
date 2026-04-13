@@ -1,0 +1,83 @@
+# =============================================================================
+# OPA Gatekeeper — Require Resource Limits
+# =============================================================================
+# ConstraintTemplate: All containers must define CPU and memory limits
+# =============================================================================
+apiVersion: templates.gatekeeper.sh/v1
+kind: ConstraintTemplate
+metadata:
+  name: requireresourcelimits
+  annotations:
+    description: "Requires all containers to specify CPU and memory resource limits"
+spec:
+  crd:
+    spec:
+      names:
+        kind: RequireResourceLimits
+      validation:
+        openAPIV3Schema:
+          type: object
+          properties:
+            exemptImages:
+              type: array
+              items:
+                type: string
+              description: "List of image patterns to exempt from this policy"
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package requireresourcelimits
+
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.containers[_]
+          not exempt(container)
+          not container.resources.limits.cpu
+          msg := sprintf("Container '%v' must set cpu limits", [container.name])
+        }
+
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.containers[_]
+          not exempt(container)
+          not container.resources.limits.memory
+          msg := sprintf("Container '%v' must set memory limits", [container.name])
+        }
+
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.containers[_]
+          not exempt(container)
+          not container.resources.requests.cpu
+          msg := sprintf("Container '%v' must set cpu requests", [container.name])
+        }
+
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.containers[_]
+          not exempt(container)
+          not container.resources.requests.memory
+          msg := sprintf("Container '%v' must set memory requests", [container.name])
+        }
+
+        exempt(container) {
+          patterns := object.get(input.parameters, "exemptImages", [])
+          img := container.image
+          pattern := patterns[_]
+          startswith(img, pattern)
+        }
+---
+# Constraint: Enforce on all Deployments
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: RequireResourceLimits
+metadata:
+  name: require-resource-limits
+spec:
+  enforcementAction: deny
+  match:
+    kinds:
+      - apiGroups: ["apps"]
+        kinds: ["Deployment", "StatefulSet", "DaemonSet"]
+    excludedNamespaces:
+      - kube-system
+      - gatekeeper-system
+      - istio-system
+  parameters:
+    exemptImages:
+      - "registry.k8s.io/"

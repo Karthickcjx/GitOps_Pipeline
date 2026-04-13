@@ -1,0 +1,76 @@
+# =============================================================================
+# Flagger Canary CR — Staging
+# =============================================================================
+# Progressive delivery: 10% → 20% → 30% → 40% → 50% traffic shift
+# Metrics: success rate > 99%, latency < 500ms
+# Includes load testing webhook
+# =============================================================================
+apiVersion: flagger.app/v1beta1
+kind: Canary
+metadata:
+  name: my-app
+  namespace: my-app-staging
+spec:
+  # Deployment to control
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: my-app
+
+  # Timeout for the entire canary process
+  progressDeadlineSeconds: 600
+
+  # HPA reference (Flagger will manage scaling during canary)
+  autoscalerRef:
+    apiVersion: autoscaling/v2
+    kind: HorizontalPodAutoscaler
+    name: my-app
+
+  # Istio service configuration
+  service:
+    port: 80
+    targetPort: 8080
+    gateways:
+      - istio-system/public-gateway
+    hosts:
+      - my-app.staging.example.com
+    retries:
+      attempts: 3
+      perTryTimeout: 1s
+      retryOn: "gateway-error,connect-failure,refused-stream"
+    trafficPolicy:
+      tls:
+        mode: ISTIO_MUTUAL
+
+  # Canary analysis configuration
+  analysis:
+    # Check every 60 seconds
+    interval: 60s
+
+    # Max failed checks before rollback
+    threshold: 5
+
+    # Max canary traffic percentage
+    maxWeight: 50
+
+    # Traffic increment per step
+    stepWeight: 10
+
+    # Metrics to evaluate
+    metrics:
+      - name: request-success-rate
+        thresholdRange:
+          min: 99
+        interval: 1m
+      - name: request-duration
+        thresholdRange:
+          max: 500
+        interval: 1m
+
+    # Load testing webhook
+    webhooks:
+      - name: load-test
+        url: http://flagger-loadtester.flagger-system/
+        timeout: 5s
+        metadata:
+          cmd: "hey -z 1m -q 10 -c 2 http://my-app-canary.my-app-staging/"

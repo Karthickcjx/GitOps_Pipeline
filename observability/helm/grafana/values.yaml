@@ -1,0 +1,147 @@
+# =============================================================================
+# Grafana — Helm Values
+# =============================================================================
+# Includes datasources for Prometheus, Loki, Tempo
+# Pre-configured dashboard provisioning
+# =============================================================================
+
+# Admin credentials (override via secret in production)
+adminUser: admin
+adminPassword: ""  # Set via Kubernetes secret
+
+# ── Persistence ─────────────────────────────────────────────────────────────
+
+persistence:
+  enabled: true
+  storageClassName: gp3
+  size: 10Gi
+
+# ── Resources ───────────────────────────────────────────────────────────────
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+# ── Service ─────────────────────────────────────────────────────────────────
+
+service:
+  type: ClusterIP
+  port: 80
+
+# ── Ingress (optional, use Istio VirtualService in production) ──────────────
+
+ingress:
+  enabled: false
+
+# ── Datasources ─────────────────────────────────────────────────────────────
+
+datasources:
+  datasources.yaml:
+    apiVersion: 1
+    datasources:
+      # Prometheus
+      - name: Prometheus
+        type: prometheus
+        url: http://kube-prometheus-stack-prometheus.monitoring:9090
+        access: proxy
+        isDefault: true
+        jsonData:
+          timeInterval: '15s'
+
+      # Loki (logs)
+      - name: Loki
+        type: loki
+        url: http://loki.monitoring:3100
+        access: proxy
+        jsonData:
+          derivedFields:
+            - name: TraceID
+              matcherRegex: '"trace_id":"(\w+)"'
+              url: '$${__value.raw}'
+              datasourceUid: tempo
+
+      # Tempo (traces)
+      - name: Tempo
+        type: tempo
+        uid: tempo
+        url: http://tempo.monitoring:3100
+        access: proxy
+        jsonData:
+          tracesToLogs:
+            datasourceUid: loki
+            filterByTraceID: true
+          serviceMap:
+            datasourceUid: prometheus
+          nodeGraph:
+            enabled: true
+
+# ── Dashboard Provisioning ──────────────────────────────────────────────────
+
+dashboardProviders:
+  dashboardproviders.yaml:
+    apiVersion: 1
+    providers:
+      - name: 'default'
+        orgId: 1
+        folder: 'General'
+        type: file
+        disableDeletion: false
+        editable: true
+        options:
+          path: /var/lib/grafana/dashboards/default
+      - name: 'gitops'
+        orgId: 1
+        folder: 'GitOps Platform'
+        type: file
+        disableDeletion: false
+        editable: true
+        options:
+          path: /var/lib/grafana/dashboards/gitops
+
+# Import community dashboards by ID
+dashboards:
+  default:
+    # Kubernetes cluster overview
+    kubernetes-cluster:
+      gnetId: 315
+      revision: 3
+      datasource: Prometheus
+
+    # Node Exporter Full
+    node-exporter:
+      gnetId: 1860
+      revision: 36
+      datasource: Prometheus
+
+    # Istio Service Mesh
+    istio-mesh:
+      gnetId: 7645
+      revision: 230
+      datasource: Prometheus
+
+  gitops:
+    # Custom canary dashboard (loaded from configmap/file)
+    canary-deployment:
+      json: |
+        {}
+
+# ── Grafana Configuration ──────────────────────────────────────────────────
+
+grafana.ini:
+  server:
+    root_url: https://grafana.example.com
+  auth:
+    disable_login_form: false
+  auth.anonymous:
+    enabled: false
+  alerting:
+    enabled: true
+  unified_alerting:
+    enabled: true
+  log:
+    mode: console
+    level: info

@@ -1,0 +1,77 @@
+# =============================================================================
+# OPA Gatekeeper — Disallow Latest Tag
+# =============================================================================
+# ConstraintTemplate: Container images must not use ":latest" tag
+# =============================================================================
+apiVersion: templates.gatekeeper.sh/v1
+kind: ConstraintTemplate
+metadata:
+  name: disallowlatesttag
+  annotations:
+    description: "Disallows container images with the ':latest' tag or no tag"
+spec:
+  crd:
+    spec:
+      names:
+        kind: DisallowLatestTag
+      validation:
+        openAPIV3Schema:
+          type: object
+          properties:
+            exemptImages:
+              type: array
+              items:
+                type: string
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package disallowlatesttag
+
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.containers[_]
+          not exempt(container)
+          endswith(container.image, ":latest")
+          msg := sprintf("Container '%v' uses ':latest' tag. Use a specific image tag.", [container.name])
+        }
+
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.containers[_]
+          not exempt(container)
+          not contains(container.image, ":")
+          msg := sprintf("Container '%v' has no image tag specified. Use a specific image tag.", [container.name])
+        }
+
+        # Init containers check
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.initContainers[_]
+          not exempt(container)
+          endswith(container.image, ":latest")
+          msg := sprintf("Init container '%v' uses ':latest' tag.", [container.name])
+        }
+
+        exempt(container) {
+          patterns := object.get(input.parameters, "exemptImages", [])
+          img := container.image
+          pattern := patterns[_]
+          startswith(img, pattern)
+        }
+---
+# Constraint: Enforce on all Deployments
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: DisallowLatestTag
+metadata:
+  name: deny-latest-tag
+spec:
+  enforcementAction: deny
+  match:
+    kinds:
+      - apiGroups: ["apps"]
+        kinds: ["Deployment", "StatefulSet", "DaemonSet"]
+      - apiGroups: ["batch"]
+        kinds: ["Job", "CronJob"]
+    excludedNamespaces:
+      - kube-system
+      - gatekeeper-system
+  parameters:
+    exemptImages:
+      - "registry.k8s.io/"

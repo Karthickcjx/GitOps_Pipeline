@@ -1,0 +1,78 @@
+# =============================================================================
+# Flagger Canary CR — Production
+# =============================================================================
+# Progressive delivery with pre-rollout acceptance test + load testing
+# Includes Slack alerting for rollback events
+# =============================================================================
+apiVersion: flagger.app/v1beta1
+kind: Canary
+metadata:
+  name: my-app
+  namespace: my-app-prod
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: my-app
+
+  progressDeadlineSeconds: 600
+
+  autoscalerRef:
+    apiVersion: autoscaling/v2
+    kind: HorizontalPodAutoscaler
+    name: my-app
+
+  service:
+    port: 80
+    targetPort: 8080
+    gateways:
+      - istio-system/public-gateway
+    hosts:
+      - my-app.example.com
+    retries:
+      attempts: 3
+      perTryTimeout: 1s
+      retryOn: "gateway-error,connect-failure,refused-stream"
+    trafficPolicy:
+      tls:
+        mode: ISTIO_MUTUAL
+
+  analysis:
+    interval: 60s
+    threshold: 5
+    maxWeight: 50
+    stepWeight: 10
+
+    metrics:
+      - name: request-success-rate
+        thresholdRange:
+          min: 99
+        interval: 1m
+      - name: request-duration
+        thresholdRange:
+          max: 500
+        interval: 1m
+
+    # Alert on rollback events
+    alerts:
+      - name: "canary rollback"
+        severity: error
+        providerRef:
+          name: slack
+          namespace: flagger-system
+
+    # Webhooks: acceptance test before rollout + load test during
+    webhooks:
+      - name: acceptance-test
+        type: pre-rollout
+        url: http://flagger-loadtester.flagger-system/
+        timeout: 30s
+        metadata:
+          type: bash
+          cmd: "curl -sd 'test' http://my-app-canary.my-app-prod/healthz | grep OK"
+
+      - name: load-test
+        url: http://flagger-loadtester.flagger-system/
+        timeout: 5s
+        metadata:
+          cmd: "hey -z 1m -q 20 -c 5 http://my-app-canary.my-app-prod/"

@@ -1,0 +1,201 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": "-- Grafana --",
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "Flagger Canary Deployment Dashboard — Traffic weight, success rate, latency, rollback events",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "title": "Canary Traffic Weight",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "expr": "flagger_canary_weight{name=\"my-app\"}",
+          "legendFormat": "{{ name }} - {{ namespace }}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 25 },
+              { "color": "orange", "value": 50 },
+              { "color": "red", "value": 75 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "title": "Canary Status",
+      "type": "stat",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "expr": "flagger_canary_status{name=\"my-app\"}",
+          "legendFormat": "{{ name }}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "Initialized", "color": "blue" } } },
+            { "type": "value", "options": { "1": { "text": "Progressing", "color": "yellow" } } },
+            { "type": "value", "options": { "2": { "text": "Succeeded", "color": "green" } } },
+            { "type": "value", "options": { "-1": { "text": "Failed", "color": "red" } } }
+          ]
+        }
+      }
+    },
+    {
+      "title": "Request Success Rate — Stable vs Canary",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "targets": [
+        {
+          "expr": "sum(rate(istio_requests_total{destination_workload=\"my-app\", response_code!~\"5..\"}[1m])) / sum(rate(istio_requests_total{destination_workload=\"my-app\"}[1m])) * 100",
+          "legendFormat": "Stable",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(istio_requests_total{destination_workload=\"my-app-canary\", response_code!~\"5..\"}[1m])) / sum(rate(istio_requests_total{destination_workload=\"my-app-canary\"}[1m])) * 100",
+          "legendFormat": "Canary",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 90,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 95 },
+              { "color": "green", "value": 99 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "title": "P99 Latency — Stable vs Canary",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(istio_request_duration_milliseconds_bucket{destination_workload=\"my-app\"}[1m])) by (le))",
+          "legendFormat": "Stable P99",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(istio_request_duration_milliseconds_bucket{destination_workload=\"my-app-canary\"}[1m])) by (le))",
+          "legendFormat": "Canary P99",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 200 },
+              { "color": "red", "value": 500 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "title": "Error Rate Over Time",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "targets": [
+        {
+          "expr": "100 * sum(rate(istio_requests_total{destination_workload=\"my-app\", response_code=~\"5..\"}[1m])) / sum(rate(istio_requests_total{destination_workload=\"my-app\"}[1m]))",
+          "legendFormat": "Error Rate %",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "red", "value": 5 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "title": "Request Rate (RPS)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "targets": [
+        {
+          "expr": "sum(rate(istio_requests_total{destination_workload=\"my-app\"}[1m]))",
+          "legendFormat": "Stable RPS",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(istio_requests_total{destination_workload=\"my-app-canary\"}[1m]))",
+          "legendFormat": "Canary RPS",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        }
+      }
+    }
+  ],
+  "schemaVersion": 39,
+  "tags": ["canary", "flagger", "istio", "gitops"],
+  "templating": {
+    "list": [
+      {
+        "current": { "text": "my-app-prod", "value": "my-app-prod" },
+        "hide": 0,
+        "label": "Namespace",
+        "name": "namespace",
+        "query": "label_values(flagger_canary_weight, namespace)",
+        "type": "query"
+      }
+    ]
+  },
+  "time": { "from": "now-1h", "to": "now" },
+  "title": "Canary Deployment Dashboard",
+  "uid": "canary-deployment",
+  "version": 1
+}

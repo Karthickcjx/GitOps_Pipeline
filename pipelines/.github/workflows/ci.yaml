@@ -1,0 +1,199 @@
+# =============================================================================
+# CI Pipeline — Build, Test, Scan, Push
+# =============================================================================
+# Triggers on push to main and pull requests.
+# Uses OIDC authentication (no static AWS keys).
+#
+# Pipeline stages:
+#   1. test       — Run unit tests + coverage
+#   2. build-push — Build Docker image, push to ECR
+#   3. trivy-scan — Security scan, upload SARIF to GitHub Security
+# =============================================================================
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/my-app/**'
+      - 'pipelines/.github/workflows/ci.yaml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'apps/my-app/**'
+
+permissions:
+  id-token: write          # OIDC authentication with AWS
+  contents: read           # Checkout code
+  security-events: write   # Upload SARIF to Security tab
+  pull-requests: write     # Comment on PRs
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REGISTRY: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com
+  IMAGE_NAME: gitops-platform-my-app
+  GO_VERSION: '1.22'
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────────────
+  # Job 1: Test
+  # ─────────────────────────────────────────────────────────────────────────
+  test:
+    name: 🧪 Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: apps/my-app/go.sum
+
+      - name: Download dependencies
+        working-directory: apps/my-app
+        run: go mod download
+
+      - name: Run unit tests
+        working-directory: apps/my-app
+        run: |
+          go test ./... -v -race -coverprofile=coverage.out -covermode=atomic
+          go tool cover -func=coverage.out
+
+      - name: Upload coverage
+        if: github.event_name == 'push'
+        uses: codecov/codecov-action@v4
+        with:
+          file: apps/my-app/coverage.out
+          flags: unittests
+          fail_ci_if_error: false
+
+      - name: Run go vet
+        working-directory: apps/my-app
+        run: go vet ./...
+
+      - name: Check formatting
+        working-directory: apps/my-app
+        run: |
+          if [ -n "$(gofmt -s -l .)" ]; then
+            echo "Code is not formatted. Run 'gofmt -s -w .'"
+            gofmt -s -d .
+            exit 1
+          fi
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Job 2: Build and Push
+  # ─────────────────────────────────────────────────────────────────────────
+  build-push:
+    name: 🏗️ Build & Push
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    timeout-minutes: 15
+
+    outputs:
+      image_tag: ${{ steps.meta.outputs.version }}
+      full_image: ${{ steps.meta.outputs.tags }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/gitops-platform-github-actions-ecr
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,prefix=sha-
+            type=raw,value=${{ github.sha }}
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: apps/my-app
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            VERSION=${{ github.ref_name }}
+            COMMIT=${{ github.sha }}
+            BUILD_TIME=${{ github.event.head_commit.timestamp }}
+
+      - name: Output image details
+        run: |
+          echo "## 🐳 Docker Image" >> $GITHUB_STEP_SUMMARY
+          echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Registry | ${{ env.ECR_REGISTRY }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Image | ${{ env.IMAGE_NAME }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Tag | ${{ github.sha }} |" >> $GITHUB_STEP_SUMMARY
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Job 3: Security Scan (Trivy)
+  # ─────────────────────────────────────────────────────────────────────────
+  trivy-scan:
+    name: 🔒 Security Scan
+    needs: build-push
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/gitops-platform-github-actions-ecr
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: "${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}"
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          exit-code: '1'
+          severity: 'CRITICAL'
+          ignore-unfixed: true
+
+      - name: Upload Trivy scan results to GitHub Security
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+      - name: Trivy summary
+        if: always()
+        run: |
+          echo "## 🔒 Security Scan Results" >> $GITHUB_STEP_SUMMARY
+          echo "Trivy scan completed. Check the Security tab for details." >> $GITHUB_STEP_SUMMARY

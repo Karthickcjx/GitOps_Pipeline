@@ -1,0 +1,124 @@
+# =============================================================================
+# Update Manifests — Bump Image Tag in Kubernetes Overlays
+# =============================================================================
+# Triggered on successful CI completion. Updates the image tag in
+# Kustomize overlays to trigger ArgoCD sync.
+# =============================================================================
+
+name: Update Manifests
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: write    # Push updated manifests
+
+env:
+  IMAGE_NAME: gitops-platform-my-app
+
+jobs:
+  update-staging:
+    name: 📦 Update Staging Manifests
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Setup Kustomize
+        uses: imranismail/setup-kustomize@v2
+
+      - name: Get image tag from CI run
+        id: get-tag
+        run: |
+          # The image tag is the SHA of the commit that triggered CI
+          SHA=${{ github.event.workflow_run.head_sha }}
+          echo "tag=${SHA}" >> $GITHUB_OUTPUT
+          echo "Image tag: ${SHA}"
+
+      - name: Update staging overlay
+        run: |
+          cd infra/k8s/overlays/staging
+          kustomize edit set image \
+            MY_APP_IMAGE=${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com/${{ env.IMAGE_NAME }}:${{ steps.get-tag.outputs.tag }}
+
+          echo "Updated staging overlay:"
+          cat kustomization.yaml
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add infra/k8s/overlays/staging/
+          git diff --cached --quiet && echo "No changes to commit" && exit 0
+
+          git commit -m "chore(staging): update my-app image to ${{ steps.get-tag.outputs.tag }}
+
+          Triggered by CI run: ${{ github.event.workflow_run.html_url }}
+          Commit: ${{ github.event.workflow_run.head_sha }}"
+
+          git push
+
+      - name: Summary
+        run: |
+          echo "## 📦 Manifest Update — Staging" >> $GITHUB_STEP_SUMMARY
+          echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Image Tag | \`${{ steps.get-tag.outputs.tag }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Environment | staging |" >> $GITHUB_STEP_SUMMARY
+          echo "| ArgoCD | Will auto-sync |" >> $GITHUB_STEP_SUMMARY
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Production — triggered by version tags
+  # ─────────────────────────────────────────────────────────────────────────
+  update-production:
+    name: 🚀 Update Production Manifests
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' && startsWith(github.event.workflow_run.head_branch, 'refs/tags/v') }}
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Setup Kustomize
+        uses: imranismail/setup-kustomize@v2
+
+      - name: Get image tag
+        id: get-tag
+        run: |
+          SHA=${{ github.event.workflow_run.head_sha }}
+          echo "tag=${SHA}" >> $GITHUB_OUTPUT
+
+      - name: Update production overlay
+        run: |
+          cd infra/k8s/overlays/production
+          kustomize edit set image \
+            MY_APP_IMAGE=${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com/${{ env.IMAGE_NAME }}:${{ steps.get-tag.outputs.tag }}
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add infra/k8s/overlays/production/
+          git diff --cached --quiet && echo "No changes to commit" && exit 0
+
+          git commit -m "chore(production): update my-app image to ${{ steps.get-tag.outputs.tag }}
+
+          Triggered by release tag
+          Commit: ${{ github.event.workflow_run.head_sha }}"
+
+          git push

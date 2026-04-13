@@ -1,0 +1,31 @@
+# =============================================================================
+# ArgoCD Application — Observability Stack
+# =============================================================================
+# Deploys Prometheus, Grafana, Loki, Tempo to the monitoring namespace
+# =============================================================================
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: observability
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: observability
+    app.kubernetes.io/part-of: gitops-platform
+spec:
+  project: staging  # Observability deployed via staging project
+
+  source:
+    repoURL: https://github.com/org/gitops-platform
+    targetRevision: HEAD
+    path: observability/helm
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

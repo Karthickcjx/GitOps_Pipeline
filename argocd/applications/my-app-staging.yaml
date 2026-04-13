@@ -1,0 +1,57 @@
+# =============================================================================
+# ArgoCD Application — my-app (Staging)
+# =============================================================================
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: my-app-staging
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: my-app
+    app.kubernetes.io/environment: staging
+    app.kubernetes.io/part-of: gitops-platform
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  annotations:
+    notifications.argoproj.io/subscribe.on-sync-succeeded.slack: platform-deployments
+    notifications.argoproj.io/subscribe.on-sync-failed.slack: platform-alerts
+spec:
+  project: staging
+
+  source:
+    repoURL: https://github.com/org/gitops-platform
+    targetRevision: HEAD
+    path: infra/k8s/overlays/staging
+    kustomize: {}
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: my-app-staging
+
+  syncPolicy:
+    automated:
+      prune: true        # Delete resources no longer in Git
+      selfHeal: true     # Revert manual changes to match Git
+      allowEmpty: false  # Don't sync empty manifests
+    syncOptions:
+      - CreateNamespace=true
+      - PrunePropagationPolicy=foreground
+      - PruneLast=true
+    retry:
+      limit: 3
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 1m
+
+  # Ignore specific diffs (e.g., Flagger-managed fields)
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      jsonPointers:
+        - /spec/replicas  # Managed by HPA/Flagger
+    - group: autoscaling
+      kind: HorizontalPodAutoscaler
+      jsonPointers:
+        - /spec/minReplicas
+        - /spec/maxReplicas

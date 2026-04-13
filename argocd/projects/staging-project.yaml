@@ -1,0 +1,53 @@
+# =============================================================================
+# ArgoCD AppProject — Staging
+# =============================================================================
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: staging
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  description: Staging environment workloads
+
+  # Allowed source repos
+  sourceRepos:
+    - https://github.com/org/gitops-platform
+    - https://github.com/org/gitops-platform.git
+
+  # Allowed destinations
+  destinations:
+    - namespace: my-app-staging
+      server: https://kubernetes.default.svc
+    - namespace: monitoring
+      server: https://kubernetes.default.svc
+
+  # Cluster-level resources this project can manage
+  clusterResourceWhitelist:
+    - group: ''
+      kind: Namespace
+
+  # Resources that cannot be managed (protect critical resources)
+  namespaceResourceBlacklist:
+    - group: ''
+      kind: ResourceQuota
+    - group: ''
+      kind: LimitRange
+
+  # RBAC for the project
+  roles:
+    - name: developer
+      description: "Developer role — read-only access"
+      policies:
+        - p, proj:staging:developer, applications, get, staging/*, allow
+        - p, proj:staging:developer, applications, sync, staging/*, allow
+      groups:
+        - developers
+
+    - name: admin
+      description: "Admin role — full access"
+      policies:
+        - p, proj:staging:admin, applications, *, staging/*, allow
+      groups:
+        - platform-admins

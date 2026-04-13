@@ -1,0 +1,44 @@
+# =============================================================================
+# Trivy Configuration
+# =============================================================================
+# Used in CI pipeline and Trivy Operator cluster scanning
+# =============================================================================
+
+# Severities to check
+severity:
+  - CRITICAL
+  - HIGH
+
+# Ignore unfixed vulnerabilities
+ignore-unfixed: true
+
+# Security checks to run
+security-checks:
+  - vuln      # Vulnerability scanning
+  - config    # Configuration scanning
+  - secret    # Secret scanning
+
+# Output format
+format: sarif
+
+# Exit code: 1 = fail on findings
+exit-code: 1
+
+# Skip specific CVEs (with documented reasons)
+# Uncomment and add CVEs to skip:
+# skip-cves:
+#   - CVE-YYYY-XXXXX  # Reason: False positive / mitigated by network policy
+
+# Ignored paths (test files, docs)
+skip-dirs:
+  - tests/
+  - docs/
+  - .github/
+
+# Cache directory
+cache-dir: /tmp/trivy-cache
+
+# Database settings
+db:
+  skip-update: false
+  light: false
